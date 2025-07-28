@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 24px;
+        margin: 0;
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 460px;
+      }
+
+
+      h3 {
+        margin-top: 0;
+        font-size: 18px;
+        text-align: center;
+      }
+
+
+      input[type="text"] {
+        width: 100%;
+        padding: 10px;
+        font-size: 14px;
+        box-sizing: border-box;
+        margin-top: 8px;
+      }
+
+
+      button {
+        display: block;
+        width: 100%;
+        padding: 10px;
+        margin-top: 16px;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+
+      button:hover {
+        background-color: #45a049;
+      }
+
+
+      .message {
+        margin-top: 16px;
+        font-size: 14px;
+        color: #333;
+        text-align: center;
+      }
+
+
+      .success {
+        color: green;
+        font-weight: bold;
+      }
+
+
+      .spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid #ccc;
+        border-top-color: #4CAF50;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+
+
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <h3>Enter Image Directory URL</h3>
+    <input type="text" id="urlInput" placeholder="https://example.com/folder" />
+    <button onclick="submitUrl()">Submit</button>
+    <div id="message" class="message"></div>
+
+
+    <script>
+      function submitUrl() {
+        const url = document.getElementById("urlInput").value.trim();
+        const message = document.getElementById("message");
+
+
+        if (!url) {
+          message.innerHTML = "⚠️ Please enter a valid URL.";
+          return;
+        }
+
+
+        message.innerHTML = '<span class="spinner"></span>Importing...';
+
+
+        google.script.run
+          .withSuccessHandler(function(response) {
+            message.innerHTML = `✅ <span class="success">${response}</span>`;
+            setTimeout(() => google.script.host.close(), 2000);
+          })
+          .withFailureHandler(function(error) {
+            message.innerHTML = `❌ Error: ${error.message}`;
+          })
+          .fetchAndPopulateImageFilenames(url);
+      }
+    </script>
+  </body>
+</html>
