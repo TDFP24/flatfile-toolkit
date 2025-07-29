@@ -92,7 +92,21 @@ function generateUnifiedImageMatchPreview() {
   );
 
   const flatData = flatSheet.getRange(4, 1, flatSheet.getLastRow() - 3, 48).getValues();
-  const aliasGroups = getAliasGroupsFromSwatchFull(swatchSheet);
+
+  // --- STRICT SWATCH MAPPING LOGIC ---
+  const swatchValues = swatchSheet.getRange(1, 1, swatchSheet.getLastRow(), swatchSheet.getLastColumn()).getValues();
+  const swatchRows = swatchValues.map(row => ({
+    canonical: normalizeColor(row[0]),
+    alternative: normalizeColor(row[1]),
+    aliases: row.slice(2).map(cell => normalizeColor(cell)).filter(Boolean)
+  }));
+
+  function findSwatchRow(productColor) {
+    const normColor = normalizeColor(productColor);
+    return swatchRows.find(
+      row => row.canonical === normColor || row.alternative === normColor
+    );
+  }
 
   const dimensionEntry = normalizedFilenameMap.find(obj => obj.normalized.includes("dimension"));
   const dimensionUrl = dimensionEntry ? dimensionEntry.url : "";
@@ -108,54 +122,302 @@ function generateUnifiedImageMatchPreview() {
   const output = [["Product Title", "Suggested Filename", "Main Image URL", "Dimensions URL", ...Array.from({ length: 7 }, (_, i) => `Lifestyle ${i + 1}`)]];
 
   const isOnePackTitle = (title) => {
-  return /\(1\s*pack\)/i.test(title) || /\b1pk\b/i.test(title) || /\bsingle\b/i.test(title);
+    // If the title contains any multipack identifier, it's NOT a 1-pack
+    if (/\b(2|3|4|5|6|10)\s*(pk|pack)\b/i.test(title)) return false;
+    // If it says 1 pack, 1pk, or single, it's a 1-pack
+    if (/\(1\s*pack\)/i.test(title) || /\b1pk\b/i.test(title) || /\bsingle\b/i.test(title)) return true;
+    // If it doesn't mention any pack size, treat as 1-pack
+    return true;
   };
 
-  const isMultipackFilename = (filename) => {
-    const norm = normalizeColor(filename);
-    return /\b(2pk|3pk|4pk|5pk|10pk|2-pack|3-pack|5-pack|10-pack|packs?)\b/.test(norm) || !norm.endsWith("-main");
-  };
+  const multipackPattern = /\b(2pk|3pk|4pk|5pk|10pk|2-pack|3-pack|5-pack|10-pack|packs?)\b/i;
 
   const getPackSizeAliases = (packCode) => {
     const num = packCode.replace("pk", "");
     return [packCode, `${num}packs`, `${num}pack`, `${num}-pack`];
   };
 
+  // Helper to extract color from product title
+  function extractColorFromTitle(title) {
+    const match = title.match(/\(([^)]+)\)/);
+    if (match) {
+      return match[1].trim();
+    }
+    return "";
+  }
+
+  // Helper to expand single-word colors to their full combinations
+  function expandSingleWordColor(color) {
+    const singleWordExpansions = {
+      'gold': 'gold-black',
+      'red': 'red-white',
+      'yellow': 'yellow-black',
+      'silver': 'silver-black',
+      'blue': 'blue-white',
+      'black': 'black-white',
+      'white': 'white-black',
+      // Add other single-word expansions as needed
+    };
+    return singleWordExpansions[color.toLowerCase()] || color;
+  }
+
+  // Helper to match aliases in filenames with flexible formatting but strict content/order
+  function matchesAliasInFilename(alias, filename) {
+    const normAlias = normalizeColor(alias);
+    const normFilename = normalizeColor(filename);
+    
+    // Check if the normalized alias appears in the normalized filename
+    // But prioritize exact matches over substring matches
+    if (normFilename === normAlias) return true;
+    if (normFilename.includes(normAlias)) {
+      // For single-word aliases, ensure they're not part of a larger combination
+      if (normAlias.split('-').length === 1) {
+        // Single word like 'black', 'gold', 'red' - check for word boundaries
+        const wordBoundaryPattern = new RegExp(`(^|[-_])${normAlias}([-_]|$)`);
+        const hasWordBoundary = wordBoundaryPattern.test(normFilename);
+        
+        // Additional check: if this is a single-word alias like 'black', 
+        // make sure it's not part of a combination like 'black-gold'
+        if (hasWordBoundary && normAlias === 'black') {
+          // For 'black', only match if it's 'black' or 'black-white', not 'black-gold' or 'black-silver'
+          if (normFilename.includes('black-gold') || normFilename.includes('black-silver')) return false;
+        }
+        if (hasWordBoundary && normAlias === 'gold') {
+          // For 'gold', only match if it's 'gold' or 'gold-black', not 'black-gold'
+          if (normFilename.includes('black-gold')) return false;
+        }
+        if (hasWordBoundary && normAlias === 'silver') {
+          // For 'silver', only match if it's 'silver' or 'silver-black', not 'black-silver'
+          if (normFilename.includes('black-silver')) return false;
+        }
+        
+        return hasWordBoundary;
+      }
+      return true;
+    }
+    return false;
+  }
+
   for (const row of flatData) {
     const title = row[9] || "";
-    const color = normalizeColor(row[37] || "");
+    const colorField = extractColorFromTitle(title) || row[37] || "";
+    const expandedColor = expandSingleWordColor(colorField);
+    const color = normalizeColor(expandedColor);
     const size = normalizeColor(row[38] || "");
     const packCode = extractPackCode(row[38], row[9])?.toLowerCase();
     const isOnePack = isOnePackTitle(title);
     let suggestedFilename = "";
     let matchUrl = "";
+    let debugSwatchMatch = "";
 
-    const searchImage = (filterFn) => {
-      for (const group of aliasGroups) {
-        if (!group.includes(color)) continue;
-        for (const alias of group) {
-          const matchObj = normalizedFilenameMap.find(obj =>
-            obj.normalized.includes(alias) && filterFn(obj.original)
-          );
-          if (matchObj) {
-            suggestedFilename = matchObj.original;
-            matchUrl = matchObj.url || "";
+    // --- STRICT COLOR/ALIAS MATCHING ---
+    const swatchRow = swatchRows.find(
+      row => row.canonical === color || row.alternative === color
+    );
+    if (swatchRow) {
+      debugSwatchMatch = swatchRow.canonical + (swatchRow.alternative ? ` / ${swatchRow.alternative}` : "");
+      if (isOnePack) {
+        // 1-pack: match color/alias, but NOT any multipack identifier
+        let matchedAlias = "";
+        const matchObj = normalizedFilenameMap.find(obj => {
+          // First try exact matches, but with filtering
+          const exactAlias = swatchRow.aliases.find(alias => {
+            const normAlias = normalizeColor(alias);
+            const normObj = obj.normalized;
+            
+            // Skip problematic single-word aliases that cause cross-matches
+            if (normAlias === 'black' && normObj.includes('black-gold')) return false;
+            if (normAlias === 'black' && normObj.includes('black-silver')) return false;
+            if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
+            if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
+            
+            return normObj === normAlias || normObj.includes(normAlias);
+          });
+          if (exactAlias && !multipackPattern.test(obj.normalized)) {
+            matchedAlias = exactAlias;
             return true;
           }
+          
+          // Then try partial matches, but filter out problematic partial aliases
+          const foundAlias = swatchRow.aliases.find(alias => {
+            // Skip aliases that start with dash (like "-gold") as they cause false matches
+            if (alias.startsWith('-') || alias.endsWith('-')) return false;
+            
+            // Skip problematic aliases that cause cross-matches
+            const normAlias = normalizeColor(alias);
+            const normObj = obj.normalized;
+            
+            // Skip problematic single-word aliases that cause cross-matches
+            if (normAlias === 'black' && normObj.includes('black-gold')) return false;
+            if (normAlias === 'black' && normObj.includes('black-silver')) return false;
+            if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
+            if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
+            
+            // Check if this alias would match the wrong color combination
+            // For example, if we're in the "Brush Gold" row, we don't want "gold-black" 
+            // to match "black-gold" filenames
+            if (normAlias.includes('-')) {
+              const parts = normAlias.split('-');
+              // If this is a two-part color like "gold-black", check if it's in the wrong order
+              // for the current swatch row
+              if (parts.length === 2) {
+                const [first, second] = parts;
+                // If we're in a "Gold" row but the alias is "gold-black", 
+                // and we're looking for "black-gold" filenames, skip it
+                if ((first === 'gold' && second === 'black') || 
+                    (first === 'black' && second === 'gold')) {
+                  // This is a problematic cross-match - skip it
+                  return false;
+                }
+              }
+            }
+            
+            return matchesAliasInFilename(alias, obj.original);
+          });
+          if (foundAlias && !multipackPattern.test(obj.normalized)) {
+            matchedAlias = foundAlias;
+            return true;
+          }
+          return false;
+        });
+        if (matchObj) {
+          suggestedFilename = matchObj.original;
+          matchUrl = matchObj.url || "";
+          debugSwatchMatch += ` | Matched: ${matchedAlias}`;
         }
-      }
-      return false;
-    };
-
-    if (isOnePack) {
-      searchImage(f => !isMultipackFilename(f));
-    } else if (packCode) {
-      const packAliases = getPackSizeAliases(packCode);
-      const found = searchImage(f =>
-        packAliases.some(p => normalizeColor(f).includes(p))
-      );
-      if (!found) {
-        searchImage(f => normalizeColor(f).includes(color));
+      } else if (packCode) {
+        // Multipack: match color/alias AND pack size
+        const packAliases = getPackSizeAliases(packCode);
+        let matchedAlias = "";
+        const matchObj = normalizedFilenameMap.find(obj => {
+          // First try exact matches, but with filtering
+          const exactAlias = swatchRow.aliases.find(alias => {
+            const normAlias = normalizeColor(alias);
+            const normObj = obj.normalized;
+            
+            // Skip problematic single-word aliases that cause cross-matches
+            if (normAlias === 'black' && normObj.includes('black-gold')) return false;
+            if (normAlias === 'black' && normObj.includes('black-silver')) return false;
+            if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
+            if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
+            
+            return (normObj === normAlias || normObj.includes(normAlias)) &&
+                   packAliases.some(p => normObj.includes(p));
+          });
+          if (exactAlias) {
+            matchedAlias = exactAlias;
+            return true;
+          }
+          
+          // Then try partial matches, but filter out problematic partial aliases
+          const foundAlias = swatchRow.aliases.find(alias => {
+            // Skip aliases that start with dash (like "-gold") as they cause false matches
+            if (alias.startsWith('-') || alias.endsWith('-')) return false;
+            
+            // Skip problematic aliases that cause cross-matches
+            const normAlias = normalizeColor(alias);
+            const normObj = obj.normalized;
+            
+            // Skip problematic single-word aliases that cause cross-matches
+            if (normAlias === 'black' && normObj.includes('black-gold')) return false;
+            if (normAlias === 'black' && normObj.includes('black-silver')) return false;
+            if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
+            if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
+            
+            // Check if this alias would match the wrong color combination
+            // For example, if we're in the "Brush Gold" row, we don't want "gold-black" 
+            // to match "black-gold" filenames
+            if (normAlias.includes('-')) {
+              const parts = normAlias.split('-');
+              // If this is a two-part color like "gold-black", check if it's in the wrong order
+              // for the current swatch row
+              if (parts.length === 2) {
+                const [first, second] = parts;
+                // If we're in a "Gold" row but the alias is "gold-black", 
+                // and we're looking for "black-gold" filenames, skip it
+                if ((first === 'gold' && second === 'black') || 
+                    (first === 'black' && second === 'gold')) {
+                  // This is a problematic cross-match - skip it
+                  return false;
+                }
+              }
+            }
+            
+            return matchesAliasInFilename(alias, obj.original) &&
+                   packAliases.some(p => obj.normalized.includes(p));
+          });
+          if (foundAlias) {
+            matchedAlias = foundAlias;
+            return true;
+          }
+          return false;
+        });
+        if (matchObj) {
+          suggestedFilename = matchObj.original;
+          matchUrl = matchObj.url || "";
+          debugSwatchMatch += ` | Matched: ${matchedAlias}`;
+        } else {
+          // Fallback: color-only match within this swatch row
+          const fallbackObj = normalizedFilenameMap.find(obj => {
+            // First try exact matches, but with filtering
+            const exactAlias = swatchRow.aliases.find(alias => {
+              const normAlias = normalizeColor(alias);
+              const normObj = obj.normalized;
+              
+              // Skip problematic single-word aliases that cause cross-matches
+              if (normAlias === 'black' && normObj.includes('black-gold')) return false;
+              if (normAlias === 'black' && normObj.includes('black-silver')) return false;
+              if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
+              if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
+              
+              return normObj === normAlias || normObj.includes(normAlias);
+            });
+            if (exactAlias) {
+              matchedAlias = exactAlias;
+              return true;
+            }
+            
+            // Then try partial matches, but filter out problematic partial aliases
+            const foundAlias = swatchRow.aliases.find(alias => {
+              // Skip aliases that start with dash (like "-gold") as they cause false matches
+              if (alias.startsWith('-') || alias.endsWith('-')) return false;
+              
+              // Skip problematic aliases that cause cross-matches
+              const normAlias = normalizeColor(alias);
+              
+              // Check if this alias would match the wrong color combination
+              // For example, if we're in the "Brush Gold" row, we don't want "gold-black" 
+              // to match "black-gold" filenames
+              if (normAlias.includes('-')) {
+                const parts = normAlias.split('-');
+                // If this is a two-part color like "gold-black", check if it's in the wrong order
+                // for the current swatch row
+                if (parts.length === 2) {
+                  const [first, second] = parts;
+                  // If we're in a "Gold" row but the alias is "gold-black", 
+                  // and we're looking for "black-gold" filenames, skip it
+                  if ((first === 'gold' && second === 'black') || 
+                      (first === 'black' && second === 'gold')) {
+                    // This is a problematic cross-match - skip it
+                    return false;
+                  }
+                }
+              }
+              
+              return matchesAliasInFilename(alias, obj.original);
+            });
+            if (foundAlias) {
+              matchedAlias = foundAlias;
+              return true;
+            }
+            return false;
+          });
+          if (fallbackObj) {
+            suggestedFilename = fallbackObj.original;
+            matchUrl = fallbackObj.url || "";
+            debugSwatchMatch += ` | Fallback: ${matchedAlias}`;
+          }
+        }
       }
     }
 
@@ -164,9 +426,15 @@ function generateUnifiedImageMatchPreview() {
       suggestedFilename,
       matchUrl,
       dimensionUrl,
-      ...Array.from({ length: 7 }, (_, i) => lifestyleUrls[i] || "")
+      ...Array.from({ length: 7 }, (_, i) => lifestyleUrls[i] || ""),
+      debugSwatchMatch,
+      `${colorField} → ${expandedColor} → ${color}`
     ]);
   }
+
+  // Add debug column header
+  output[0].push("Swatch Row Matched");
+  output[0].push("Color Processing");
 
   let previewSheet = ss.getSheetByName("Image Match Preview");
   if (previewSheet) ss.deleteSheet(previewSheet);
