@@ -198,6 +198,14 @@ function generateUnifiedImageMatchPreview() {
     return false;
   }
 
+  // Helper to check if a color is Brushed Gold (or an alias)
+  function isBrushedGoldColor(color) {
+    const norm = normalizeColor(color);
+    return [
+      'brushed-gold', 'brushed gold', 'brush gold', 'brushed-gold-black', 'brush gold-black', 'brused-gold'
+    ].some(alias => norm === normalizeColor(alias));
+  }
+
   for (const row of flatData) {
     const title = row[9] || "";
     const colorField = extractColorFromTitle(title) || row[37] || "";
@@ -224,54 +232,45 @@ function generateUnifiedImageMatchPreview() {
           const exactAlias = swatchRow.aliases.find(alias => {
             const normAlias = normalizeColor(alias);
             const normObj = obj.normalized;
-            
+            // Brushed Gold exception: only allow filenames with 'brushed-gold' and not 'black-gold'
+            if (isBrushedGoldColor(expandedColor)) {
+              if (!normObj.includes('brushed-gold') || normObj.includes('black-gold')) return false;
+            }
             // Skip problematic single-word aliases that cause cross-matches
             if (normAlias === 'black' && normObj.includes('black-gold')) return false;
             if (normAlias === 'black' && normObj.includes('black-silver')) return false;
             if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
             if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
-            
             return normObj === normAlias || normObj.includes(normAlias);
           });
           if (exactAlias && !multipackPattern.test(obj.normalized)) {
             matchedAlias = exactAlias;
             return true;
           }
-          
           // Then try partial matches, but filter out problematic partial aliases
           const foundAlias = swatchRow.aliases.find(alias => {
-            // Skip aliases that start with dash (like "-gold") as they cause false matches
-            if (alias.startsWith('-') || alias.endsWith('-')) return false;
-            
-            // Skip problematic aliases that cause cross-matches
             const normAlias = normalizeColor(alias);
             const normObj = obj.normalized;
-            
+            if (alias.startsWith('-') || alias.endsWith('-')) return false;
+            // Brushed Gold exception: only allow filenames with 'brushed-gold' and not 'black-gold'
+            if (isBrushedGoldColor(expandedColor)) {
+              if (!normObj.includes('brushed-gold') || normObj.includes('black-gold')) return false;
+            }
             // Skip problematic single-word aliases that cause cross-matches
             if (normAlias === 'black' && normObj.includes('black-gold')) return false;
             if (normAlias === 'black' && normObj.includes('black-silver')) return false;
             if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
             if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
-            
-            // Check if this alias would match the wrong color combination
-            // For example, if we're in the "Brush Gold" row, we don't want "gold-black" 
-            // to match "black-gold" filenames
             if (normAlias.includes('-')) {
               const parts = normAlias.split('-');
-              // If this is a two-part color like "gold-black", check if it's in the wrong order
-              // for the current swatch row
               if (parts.length === 2) {
                 const [first, second] = parts;
-                // If we're in a "Gold" row but the alias is "gold-black", 
-                // and we're looking for "black-gold" filenames, skip it
                 if ((first === 'gold' && second === 'black') || 
                     (first === 'black' && second === 'gold')) {
-                  // This is a problematic cross-match - skip it
                   return false;
                 }
               }
             }
-            
             return matchesAliasInFilename(alias, obj.original);
           });
           if (foundAlias && !multipackPattern.test(obj.normalized)) {
@@ -294,13 +293,15 @@ function generateUnifiedImageMatchPreview() {
           const exactAlias = swatchRow.aliases.find(alias => {
             const normAlias = normalizeColor(alias);
             const normObj = obj.normalized;
-            
+            // Brushed Gold exception: only allow filenames with 'brushed-gold' and not 'black-gold'
+            if (isBrushedGoldColor(expandedColor)) {
+              if (!normObj.includes('brushed-gold') || normObj.includes('black-gold')) return false;
+            }
             // Skip problematic single-word aliases that cause cross-matches
             if (normAlias === 'black' && normObj.includes('black-gold')) return false;
             if (normAlias === 'black' && normObj.includes('black-silver')) return false;
             if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
             if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
-            
             return (normObj === normAlias || normObj.includes(normAlias)) &&
                    packAliases.some(p => normObj.includes(p));
           });
@@ -308,41 +309,30 @@ function generateUnifiedImageMatchPreview() {
             matchedAlias = exactAlias;
             return true;
           }
-          
           // Then try partial matches, but filter out problematic partial aliases
           const foundAlias = swatchRow.aliases.find(alias => {
-            // Skip aliases that start with dash (like "-gold") as they cause false matches
-            if (alias.startsWith('-') || alias.endsWith('-')) return false;
-            
-            // Skip problematic aliases that cause cross-matches
             const normAlias = normalizeColor(alias);
             const normObj = obj.normalized;
-            
+            if (alias.startsWith('-') || alias.endsWith('-')) return false;
+            // Brushed Gold exception: only allow filenames with 'brushed-gold' and not 'black-gold'
+            if (isBrushedGoldColor(expandedColor)) {
+              if (!normObj.includes('brushed-gold') || normObj.includes('black-gold')) return false;
+            }
             // Skip problematic single-word aliases that cause cross-matches
             if (normAlias === 'black' && normObj.includes('black-gold')) return false;
             if (normAlias === 'black' && normObj.includes('black-silver')) return false;
             if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
             if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
-            
-            // Check if this alias would match the wrong color combination
-            // For example, if we're in the "Brush Gold" row, we don't want "gold-black" 
-            // to match "black-gold" filenames
             if (normAlias.includes('-')) {
               const parts = normAlias.split('-');
-              // If this is a two-part color like "gold-black", check if it's in the wrong order
-              // for the current swatch row
               if (parts.length === 2) {
                 const [first, second] = parts;
-                // If we're in a "Gold" row but the alias is "gold-black", 
-                // and we're looking for "black-gold" filenames, skip it
                 if ((first === 'gold' && second === 'black') || 
                     (first === 'black' && second === 'gold')) {
-                  // This is a problematic cross-match - skip it
                   return false;
                 }
               }
             }
-            
             return matchesAliasInFilename(alias, obj.original) &&
                    packAliases.some(p => obj.normalized.includes(p));
           });
@@ -364,6 +354,10 @@ function generateUnifiedImageMatchPreview() {
               const normAlias = normalizeColor(alias);
               const normObj = obj.normalized;
               
+              // Brushed Gold exception: only allow filenames with 'brushed-gold' and not 'black-gold'
+              if (isBrushedGoldColor(expandedColor)) {
+                if (!normObj.includes('brushed-gold') || normObj.includes('black-gold')) return false;
+              }
               // Skip problematic single-word aliases that cause cross-matches
               if (normAlias === 'black' && normObj.includes('black-gold')) return false;
               if (normAlias === 'black' && normObj.includes('black-silver')) return false;
@@ -379,11 +373,18 @@ function generateUnifiedImageMatchPreview() {
             
             // Then try partial matches, but filter out problematic partial aliases
             const foundAlias = swatchRow.aliases.find(alias => {
-              // Skip aliases that start with dash (like "-gold") as they cause false matches
-              if (alias.startsWith('-') || alias.endsWith('-')) return false;
-              
-              // Skip problematic aliases that cause cross-matches
               const normAlias = normalizeColor(alias);
+              const normObj = obj.normalized;
+              if (alias.startsWith('-') || alias.endsWith('-')) return false;
+              // Brushed Gold exception: only allow filenames with 'brushed-gold' and not 'black-gold'
+              if (isBrushedGoldColor(expandedColor)) {
+                if (!normObj.includes('brushed-gold') || normObj.includes('black-gold')) return false;
+              }
+              // Skip problematic aliases that cause cross-matches
+              if (normAlias === 'black' && normObj.includes('black-gold')) return false;
+              if (normAlias === 'black' && normObj.includes('black-silver')) return false;
+              if (normAlias === 'gold' && normObj.includes('black-gold')) return false;
+              if (normAlias === 'silver' && normObj.includes('black-silver')) return false;
               
               // Check if this alias would match the wrong color combination
               // For example, if we're in the "Brush Gold" row, we don't want "gold-black" 
